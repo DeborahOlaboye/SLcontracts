@@ -104,7 +104,8 @@
 extern crate std;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, Map, String, Symbol, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Map, String,
+    Symbol, Val, Vec,
 };
 
 // ============================================================
@@ -641,6 +642,13 @@ impl SorobanLardContract {
     /// Maximum number of course IDs returned by a single `list_courses()` call.
     /// Larger catalogs must be walked with successive `offset` values so one
     /// invocation cannot exceed the transaction CPU/instruction budget.
+    ///
+    /// Rationale: `list_courses()` returns `String` IDs, not full `Course`
+    /// structs, so the limit bounds the response size and per-ID clone work.
+    /// It does not bound the read cost: the whole `CourseList` vector is
+    /// loaded on every call, so that cost grows with catalog size. The value
+    /// 50 has no benchmark behind it yet. Re-evaluate it if `list_courses()`
+    /// ever returns full `Course` records (`Course` has 23 fields today).
     pub(crate) const MAX_PAGE_SIZE: u32 = 50;
     /// Maximum number of students that may be refunded in a single
     /// `archive_course()` call. Large courses must be refunded in multiple
@@ -781,11 +789,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.events().publish(
             (Symbol::new(&env, "enrollment_start_set"), course_id.clone()),
@@ -1011,21 +1015,13 @@ impl SorobanLardContract {
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
 
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.storage().persistent().set(
             &DataKey::CourseInstructorRef(course_id.clone()),
             &instructor,
         );
-        env.storage().persistent().extend_ttl(
-            &DataKey::CourseInstructorRef(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::CourseInstructorRef(course_id.clone()));
 
         // Append to on-chain course catalog
         let mut catalog: Vec<String> = env
@@ -1037,11 +1033,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::CourseList, &catalog);
-        env.storage().persistent().extend_ttl(
-            &DataKey::CourseList,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::CourseList);
 
         env.storage().instance().set(
             &DataKey::InstructorCourseCount(instructor.clone()),
@@ -1062,11 +1054,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&instructor_list_key, &instructor_courses);
-        env.storage().persistent().extend_ttl(
-            &instructor_list_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &instructor_list_key);
 
         // Add instructor to global registry if first course
         let mut registry: Vec<Address> = env
@@ -1089,11 +1077,7 @@ impl SorobanLardContract {
             env.storage()
                 .persistent()
                 .set(&DataKey::InstructorRegistry, &registry);
-            env.storage().persistent().extend_ttl(
-                &DataKey::InstructorRegistry,
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
+            Self::extend_persistent_ttl(&env, &DataKey::InstructorRegistry);
         }
 
         env.events().publish(
@@ -1195,11 +1179,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         let pending_key = DataKey::InstructorPendingCourseCount(course.instructor.clone());
         let pending_count: u32 = env.storage().instance().get(&pending_key).unwrap_or(0);
@@ -1263,11 +1243,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.events().publish(
             (Symbol::new(&env, "course_rejected"), course_id.clone()),
@@ -1310,11 +1286,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.events().publish(
             (Symbol::new(&env, "course_paused"), course_id.clone()),
@@ -1360,11 +1332,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.events().publish(
             (Symbol::new(&env, "course_unpaused"), course_id.clone()),
@@ -1455,11 +1423,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         // Keep CourseInstructorRef in sync so enroll() continues to succeed
         // after ownership changes. Enrollment records themselves are untouched.
@@ -1467,11 +1431,7 @@ impl SorobanLardContract {
             &DataKey::CourseInstructorRef(course_id.clone()),
             &new_instructor,
         );
-        env.storage().persistent().extend_ttl(
-            &DataKey::CourseInstructorRef(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::CourseInstructorRef(course_id.clone()));
 
         let old_count_key = DataKey::InstructorCourseCount(previous_instructor.clone());
         let old_count: u32 = env.storage().instance().get(&old_count_key).unwrap_or(0);
@@ -1516,11 +1476,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&new_list_key, &new_instructor_courses);
-        env.storage().persistent().extend_ttl(
-            &new_list_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &new_list_key);
 
         env.events().publish(
             (Symbol::new(&env, "course_transferred"), course_id.clone()),
@@ -1625,11 +1581,7 @@ impl SorobanLardContract {
                             .unwrap_or_else(|| Vec::new(&env));
                         history.push_back(archived_enrollment);
                         env.storage().persistent().set(&history_key, &history);
-                        env.storage().persistent().extend_ttl(
-                            &history_key,
-                            Self::PERSISTENT_TTL_THRESHOLD,
-                            Self::PERSISTENT_TTL_EXTEND_TO,
-                        );
+                        Self::extend_persistent_ttl(&env, &history_key);
 
                         env.storage().persistent().remove(&enrollment_key);
 
@@ -1668,11 +1620,7 @@ impl SorobanLardContract {
             env.storage()
                 .persistent()
                 .set(&DataKey::Course(course_id.clone()), &course);
-            env.storage().persistent().extend_ttl(
-                &DataKey::Course(course_id.clone()),
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
+            Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
             return;
         }
 
@@ -1896,11 +1844,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.events().publish(
             (Symbol::new(&env, "course_expiry_set"), course_id.clone()),
@@ -1965,11 +1909,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.events().publish(
             (
@@ -2023,11 +1963,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.events().publish(
             (Symbol::new(&env, "content_hash_updated"), course_id.clone()),
@@ -2086,11 +2022,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&DataKey::Course(course_id.clone()), &course);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Course(course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
         env.events().publish(
             (Symbol::new(&env, "max_certificates_set"), course_id.clone()),
@@ -2346,11 +2278,7 @@ impl SorobanLardContract {
             env.storage()
                 .persistent()
                 .set(&DataKey::Course(course_id.clone()), &course);
-            env.storage().persistent().extend_ttl(
-                &DataKey::Course(course_id.clone()),
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
+            Self::extend_persistent_ttl(env, &DataKey::Course(course_id.clone()));
             env.events().publish(
                 (
                     Symbol::new(env, "course_circuit_breaker_tripped"),
@@ -2396,12 +2324,11 @@ impl SorobanLardContract {
         // Risk flags come from the same helper the fee previews use, so a
         // quote from get_effective_fee_for_payment() matches this charge.
         let (is_new_customer, is_btc_eth) = Self::resolve_risk_flags(env, student, &course.token);
-        let course_fee_override_bps = Self::course_fee_override_bps(env, &course.id);
         let (instructor_amount, platform_amount) = Self::deduct_fee(
             env,
             &course.token,
             course.price,
-            Self::course_fee_override_bps(env, course_id),
+            Self::course_fee_override_bps(&course),
             is_new_customer,
             is_btc_eth,
         );
@@ -2448,11 +2375,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&failure_key, &new_failure_count);
-        env.storage().persistent().extend_ttl(
-            &failure_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &failure_key);
 
         let actual_amount_paid = if course.price > 0 {
             // Verify actual transfer amount by checking balance before and after
@@ -2515,11 +2438,7 @@ impl SorobanLardContract {
         // this success can still proceed (the course status check in
         // validate_enrollment would have rejected it if it were Paused).
         env.storage().persistent().set(&failure_key, &0u32);
-        env.storage().persistent().extend_ttl(
-            &failure_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &failure_key);
 
         // If the pre-incremented failure count hit the threshold (meaning this
         // successful call was preceded by CIRCUIT_BREAKER_THRESHOLD-1 failures),
@@ -2538,11 +2457,7 @@ impl SorobanLardContract {
             env.storage()
                 .persistent()
                 .set(&DataKey::Course(course_id.clone()), &course);
-            env.storage().persistent().extend_ttl(
-                &DataKey::Course(course_id.clone()),
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
+            Self::extend_persistent_ttl(env, &DataKey::Course(course_id.clone()));
             env.events().publish(
                 (
                     Symbol::new(&env, "course_circuit_breaker_tripped"),
@@ -2580,11 +2495,7 @@ impl SorobanLardContract {
             &enrollment,
         );
 
-        env.storage().persistent().extend_ttl(
-            &DataKey::Enrollment(student.clone(), course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &DataKey::Enrollment(student.clone(), course_id.clone()));
 
         // Update course stats
         course.total_enrollments = course
@@ -2669,12 +2580,11 @@ impl SorobanLardContract {
             panic!("course is not available for enrollment");
         }
 
-        let course_fee_override_bps = Self::course_fee_override_bps(env, &course.id);
         let (instructor_amount, platform_amount) = Self::deduct_fee(
             env,
             &course.token,
             course.price,
-            Self::course_fee_override_bps(env, course_id),
+            Self::course_fee_override_bps(&course),
             false,
             false,
         );
@@ -2772,11 +2682,7 @@ impl SorobanLardContract {
             &enrollment,
         );
 
-        env.storage().persistent().extend_ttl(
-            &DataKey::Enrollment(student.clone(), course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &DataKey::Enrollment(student.clone(), course_id.clone()));
 
         course.total_enrollments = course
             .total_enrollments
@@ -2911,11 +2817,7 @@ impl SorobanLardContract {
             .unwrap_or_else(|| Vec::new(&env));
         history.push_back(previous_enrollment);
         env.storage().persistent().set(&history_key, &history);
-        env.storage().persistent().extend_ttl(
-            &history_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &history_key);
 
         let token_client = token::Client::new(&env, &course.token);
 
@@ -2924,12 +2826,11 @@ impl SorobanLardContract {
         // 2. Risk-based surcharges for large payments, new customers, and BTC/ETH
         // 3. Publishes RiskFeeApplied event when surcharge applies
         let (is_new_customer, is_btc_eth) = Self::resolve_risk_flags(&env, &student, &course.token);
-        let course_fee_override_bps = Self::course_fee_override_bps(&env, &course.id);
         let (instructor_amount, platform_amount) = Self::deduct_fee(
             &env,
             &course.token,
             course.price,
-            Self::course_fee_override_bps(&env, &course_id),
+            Self::course_fee_override_bps(&course),
             is_new_customer,
             is_btc_eth,
         );
@@ -3004,11 +2905,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&enrollment_key, &new_enrollment);
-        env.storage().persistent().extend_ttl(
-            &enrollment_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &enrollment_key);
 
         course.total_enrollments = course
             .total_enrollments
@@ -3213,11 +3110,7 @@ impl SorobanLardContract {
             &DataKey::Enrollment(student.clone(), course_id.clone()),
             &enrollment,
         );
-        env.storage().persistent().extend_ttl(
-            &DataKey::Enrollment(student.clone(), course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Enrollment(student.clone(), course_id.clone()));
 
         // Update active enrollments count on course
         let mut course = Self::get_course_internal(&env, &course_id)
@@ -3228,11 +3121,7 @@ impl SorobanLardContract {
             env.storage()
                 .persistent()
                 .set(&DataKey::Course(course_id.clone()), &course);
-            env.storage().persistent().extend_ttl(
-                &DataKey::Course(course_id.clone()),
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
+            Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
         }
 
         // Decrement platform-wide active enrollment counter
@@ -3380,11 +3269,7 @@ impl SorobanLardContract {
             .persistent()
             .set(&DataKey::Certificate(certificate_id.clone()), &certificate);
 
-        env.storage().persistent().extend_ttl(
-            &DataKey::Certificate(certificate_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Certificate(certificate_id.clone()));
 
         // Mark enrollment as certificate issued
         enrollment.certificate_issued = true;
@@ -3393,11 +3278,7 @@ impl SorobanLardContract {
             &DataKey::Enrollment(student.clone(), course_id.clone()),
             &enrollment,
         );
-        env.storage().persistent().extend_ttl(
-            &DataKey::Enrollment(student.clone(), course_id.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &DataKey::Enrollment(student.clone(), course_id.clone()));
 
         // Increment certificate count for course
         course.certificates_issued = course
@@ -3422,11 +3303,7 @@ impl SorobanLardContract {
         env.storage()
             .persistent()
             .set(&course_certs_key, &course_certs);
-        env.storage().persistent().extend_ttl(
-            &course_certs_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &course_certs_key);
 
         Self::update_instructor_stats(&env, &certificate.instructor, |s| {
             s.total_certificates = s
@@ -4116,11 +3993,7 @@ impl SorobanLardContract {
                         env.storage()
                             .persistent()
                             .set(&DataKey::Course(course_id.clone()), &course);
-                        env.storage().persistent().extend_ttl(
-                            &DataKey::Course(course_id.clone()),
-                            Self::PERSISTENT_TTL_THRESHOLD,
-                            Self::PERSISTENT_TTL_EXTEND_TO,
-                        );
+                        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
 
                         env.events().publish(
                             (Symbol::new(&env, "course_paused"), course_id.clone()),
@@ -4472,11 +4345,7 @@ impl SorobanLardContract {
         };
 
         env.storage().persistent().set(&key, &request);
-        env.storage().persistent().extend_ttl(
-            &key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &key);
 
         env.events().publish(
             (Symbol::new(&env, "refund_requested"), course_id.clone()),
@@ -4565,11 +4434,7 @@ impl SorobanLardContract {
                 .unwrap_or_else(|| Vec::new(&env));
             history.push_back(enrollment.clone());
             env.storage().persistent().set(&history_key, &history);
-            env.storage().persistent().extend_ttl(
-                &history_key,
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
+            Self::extend_persistent_ttl(&env, &history_key);
             env.storage().persistent().remove(&enrollment_key);
 
             // Decrement active enrollments
@@ -4862,11 +4727,7 @@ impl SorobanLardContract {
         // Some or None — the has() check is cheap and the extend is a no-op when
         // the entry is absent.
         if env.storage().persistent().has(&key) {
-            env.storage().persistent().extend_ttl(
-                &key,
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
+            Self::extend_persistent_ttl(&env, &key);
         }
         Self::get_course_internal(&env, &course_id)
     }
@@ -5117,16 +4978,14 @@ impl SorobanLardContract {
             .unwrap_or(false)
     }
 
-    fn course_fee_override_bps(env: &Env, course_id: &String) -> Option<u32> {
+    fn course_fee_override_bps(course: &Course) -> Option<u32> {
         // `platform_fee_percent == 0` means "follow the live token rate";
         // any other value is an explicit override captured at registration.
-        Self::get_course_internal(env, course_id).and_then(|course| {
-            if course.platform_fee_percent == 0 {
-                None
-            } else {
-                Some(course.platform_fee_percent.saturating_mul(100))
-            }
-        })
+        if course.platform_fee_percent == 0 {
+            None
+        } else {
+            Some(course.platform_fee_percent.saturating_mul(100))
+        }
     }
 
     fn get_student_enrollment_count_internal(env: &Env, student: &Address) -> u32 {
@@ -5142,11 +5001,7 @@ impl SorobanLardContract {
             .checked_add(1)
             .unwrap_or_else(|| panic!("student enrollment count overflow"));
         env.storage().persistent().set(&key, &count);
-        env.storage().persistent().extend_ttl(
-            &key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &key);
     }
 
     fn is_btc_eth_token_internal(env: &Env, token: &Address) -> bool {
@@ -5271,6 +5126,20 @@ impl SorobanLardContract {
         String::from_bytes(env, &digits[..len])
     }
 
+    /// Bump the TTL of a persistent entry using the contract-wide policy.
+    /// Every persistent TTL extension goes through here, so changing the
+    /// policy (or making it per key category) is a one-place edit.
+    fn extend_persistent_ttl<K>(env: &Env, key: &K)
+    where
+        K: IntoVal<Env, Val>,
+    {
+        env.storage().persistent().extend_ttl(
+            key,
+            Self::PERSISTENT_TTL_THRESHOLD,
+            Self::PERSISTENT_TTL_EXTEND_TO,
+        );
+    }
+
     /// Generate a unique enrollment reference and store the mapping
     /// from enrollment_reference -> (student, course_id).
     fn generate_enrollment_ref(env: &Env, student: &Address, course_id: &String) -> String {
@@ -5290,11 +5159,7 @@ impl SorobanLardContract {
             &DataKey::EnrollmentByRef(enrollment_ref.clone()),
             &(student.clone(), course_id.clone()),
         );
-        env.storage().persistent().extend_ttl(
-            &DataKey::EnrollmentByRef(enrollment_ref.clone()),
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &DataKey::EnrollmentByRef(enrollment_ref.clone()));
 
         enrollment_ref
     }
@@ -5306,11 +5171,7 @@ impl SorobanLardContract {
             .checked_add(amount)
             .unwrap_or_else(|| panic!("overflow computing instructor earnings"));
         env.storage().persistent().set(&key, &new_balance);
-        env.storage().persistent().extend_ttl(
-            &key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &key);
         // Also update the per-instructor total earnings accumulator
         let total_key = DataKey::InstructorTotalEarnings(instructor.clone());
         let current_total: i128 = env.storage().persistent().get(&total_key).unwrap_or(0);
@@ -5318,11 +5179,7 @@ impl SorobanLardContract {
             .checked_add(amount)
             .unwrap_or_else(|| panic!("overflow computing instructor total earnings"));
         env.storage().persistent().set(&total_key, &new_total);
-        env.storage().persistent().extend_ttl(
-            &total_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &total_key);
     }
 
     fn debit_instructor_earnings(env: &Env, instructor: &Address, token: &Address, amount: i128) {
@@ -5369,11 +5226,7 @@ impl SorobanLardContract {
                 });
         f(&mut stats);
         env.storage().persistent().set(&key, &stats);
-        env.storage().persistent().extend_ttl(
-            &key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(env, &key);
     }
 
     // ============================================================
@@ -5785,11 +5638,7 @@ impl SorobanLardContract {
         };
 
         env.storage().persistent().set(&case_key, &record);
-        env.storage().persistent().extend_ttl(
-            &case_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &case_key);
 
         env.events().publish(
             (Symbol::new(&env, "dispute_escalated"), course_id.clone()),
@@ -5861,11 +5710,7 @@ impl SorobanLardContract {
         }
 
         env.storage().persistent().set(&case_key, &case);
-        env.storage().persistent().extend_ttl(
-            &case_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &case_key);
 
         env.events().publish(
             (Symbol::new(&env, "arbitration_resolved"), course_id.clone()),
@@ -5952,11 +5797,7 @@ impl SorobanLardContract {
 
         waitlist.push_back(student.clone());
         env.storage().persistent().set(&waitlist_key, &waitlist);
-        env.storage().persistent().extend_ttl(
-            &waitlist_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &waitlist_key);
 
         env.events().publish(
             (Symbol::new(&env, "waitlist_joined"), course_id.clone()),
@@ -6001,11 +5842,7 @@ impl SorobanLardContract {
 
         if new_waitlist.len() > 0 {
             env.storage().persistent().set(&waitlist_key, &new_waitlist);
-            env.storage().persistent().extend_ttl(
-                &waitlist_key,
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
+            Self::extend_persistent_ttl(&env, &waitlist_key);
         } else {
             env.storage().persistent().remove(&waitlist_key);
         }
@@ -6046,11 +5883,7 @@ impl SorobanLardContract {
 
                 if new_waitlist.len() > 0 {
                     env.storage().persistent().set(&waitlist_key, &new_waitlist);
-                    env.storage().persistent().extend_ttl(
-                        &waitlist_key,
-                        Self::PERSISTENT_TTL_THRESHOLD,
-                        Self::PERSISTENT_TTL_EXTEND_TO,
-                    );
+                    Self::extend_persistent_ttl(env, &waitlist_key);
                 } else {
                     env.storage().persistent().remove(&waitlist_key);
                 }
